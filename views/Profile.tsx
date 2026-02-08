@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useMemo } from 'react';
 import { JournalEntry, User, Tab, Quote, IconicQuote, BibleAffirmation } from '../types';
 
@@ -24,22 +25,21 @@ const Profile: React.FC<ProfileProps> = ({ user, entries, quotes, iconic, bible,
 
   const combinedFeed = useMemo(() => {
     const list = [
-      ...savedWisdom.map(q => ({ id: q.id, type: 'wisdom', data: q, timestamp: q.updatedAt || 0 })),
-      ...savedIconic.map(q => ({ id: q.id, type: 'legend', data: q, timestamp: 0 })),
-      ...savedBible.map(q => ({ id: q.id, type: 'verse', data: q, timestamp: 0 })),
-      ...bookmarkedVerses.map(v => ({ id: v.id, type: 'kjv', data: v, timestamp: v.timestamp || Date.now() }))
+      ...savedWisdom.map(q => ({ id: q.id, type: 'wisdom', label: 'Old Wisdom', data: q, timestamp: q.updatedAt || 1 })),
+      ...savedIconic.map(q => ({ id: q.id, type: 'legend', label: 'Iconic Soul', data: q, timestamp: 2 })),
+      ...savedBible.map(q => ({ id: q.id, type: 'verse', label: 'Scripture Flow', data: q, timestamp: 3 })),
+      // Ensure KJV items from Supabase are correctly mapped
+      ...bookmarkedVerses.map(v => ({ id: v.id, type: 'kjv', label: 'Holy Scripture', data: v, timestamp: v.timestamp || 4 }))
     ];
-    return list.sort((a, b) => b.timestamp - a.timestamp);
+    // Sort by timestamp if available
+    return list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
   }, [savedWisdom, savedIconic, savedBible, bookmarkedVerses]);
 
-  // Calculate dynamic activity metric: Days Active This Month
   const activeDaysThisMonth = useMemo(() => {
     if (!entries || entries.length === 0) return 0;
-    
     const now = new Date();
     const currentMonth = now.getMonth();
     const currentYear = now.getFullYear();
-    
     const uniqueDays = new Set(
       entries
         .filter(entry => {
@@ -48,7 +48,6 @@ const Profile: React.FC<ProfileProps> = ({ user, entries, quotes, iconic, bible,
         })
         .map(entry => new Date(entry.timestamp).toDateString())
     );
-    
     return uniqueDays.size;
   }, [entries]);
 
@@ -90,28 +89,18 @@ const Profile: React.FC<ProfileProps> = ({ user, entries, quotes, iconic, bible,
         <p className="text-primary/60 text-[10px] font-black uppercase tracking-[0.4em] mb-8">Level: Growth Seeker</p>
 
         <div className="grid grid-cols-3 gap-3 w-full">
-          <button 
-            onClick={scrollToCabinet}
-            className="glass py-5 rounded-3xl active:scale-95 transition-all border-white/5 hover:border-primary/20"
-          >
+          <button onClick={scrollToCabinet} className="glass py-5 rounded-3xl active:scale-95 transition-all border-white/5 hover:border-primary/20">
             <p className="text-primary font-black text-2xl">{combinedFeed.length}</p>
             <p className="text-[8px] uppercase tracking-widest text-slate-900/30 dark:text-white/30 font-bold">Saved</p>
           </button>
-          <button 
-            onClick={() => onStatClick('book')}
-            className="glass py-5 rounded-3xl border-x border-white/5 active:scale-95 transition-all hover:border-jamaican-gold/20"
-          >
+          <button onClick={() => onStatClick('book')} className="glass py-5 rounded-3xl border-x border-white/5 active:scale-95 transition-all hover:border-jamaican-gold/20">
             <p className="text-jamaican-gold font-black text-2xl">{entries.length}</p>
             <p className="text-[8px] uppercase tracking-widest text-slate-900/30 dark:text-white/30 font-bold">Journals</p>
           </button>
           <div className="glass py-5 rounded-3xl border-white/5 relative overflow-hidden">
             <p className="text-primary font-black text-2xl">{activeDaysThisMonth}</p>
             <p className="text-[8px] uppercase tracking-widest text-slate-900/30 dark:text-white/30 font-bold">Active Days</p>
-            {activeDaysThisMonth > 0 && (
-              <div className="absolute top-1 right-1">
-                <span className="material-symbols-outlined text-[10px] text-primary animate-pulse">local_fire_department</span>
-              </div>
-            )}
+            {activeDaysThisMonth > 0 && <div className="absolute top-1 right-1"><span className="material-symbols-outlined text-[10px] text-primary animate-pulse">local_fire_department</span></div>}
           </div>
         </div>
       </div>
@@ -123,12 +112,12 @@ const Profile: React.FC<ProfileProps> = ({ user, entries, quotes, iconic, bible,
         </h3>
         
         <div className="space-y-6">
-          {combinedFeed.map((item, idx) => (
+          {combinedFeed.map((item) => (
             <div key={`${item.type}-${item.id}`} className="glass p-8 rounded-[2.5rem] border-white/5 shadow-xl animate-fade-in group hover:border-primary/30 transition-all relative overflow-hidden">
               <div className="flex justify-between items-start mb-4">
                 <div className="flex flex-col">
                   <span className="text-[9px] font-black text-primary uppercase tracking-[0.3em] bg-primary/10 px-3 py-1 rounded-full border border-primary/20 mb-2 w-fit">
-                    {item.type}
+                    {item.label}
                   </span>
                   <p className="text-[10px] font-bold text-slate-900/20 dark:text-white/20 uppercase tracking-widest flex items-center gap-1">
                      Added to Likkle Book <span className="material-symbols-outlined text-[10px]">auto_stories</span>
@@ -152,9 +141,8 @@ const Profile: React.FC<ProfileProps> = ({ user, entries, quotes, iconic, bible,
                 </p>
               </div>
 
-              {/* Decorative corner element */}
               <div className="absolute -bottom-4 -right-4 opacity-5 pointer-events-none group-hover:opacity-10 transition-opacity">
-                <span className="material-symbols-outlined text-[100px]">{item.type === 'kjv' ? 'menu_book' : 'spa'}</span>
+                <span className="material-symbols-outlined text-[100px]">{item.type === 'kjv' || item.type === 'verse' ? 'menu_book' : 'spa'}</span>
               </div>
             </div>
           ))}
@@ -165,12 +153,7 @@ const Profile: React.FC<ProfileProps> = ({ user, entries, quotes, iconic, bible,
                   <span className="material-symbols-outlined text-6xl text-slate-900/10 dark:text-white/10">bookmark_add</span>
                </div>
                <p className="text-sm font-black uppercase tracking-[0.3em] text-slate-900/20 dark:text-white/20">Your cabinet is empty.</p>
-               <button 
-                onClick={() => onStatClick('discover')}
-                className="mt-6 text-primary font-black uppercase tracking-widest text-xs hover:underline"
-               >
-                 Find some vibes →
-               </button>
+               <button onClick={() => onStatClick('discover')} className="mt-6 text-primary font-black uppercase tracking-widest text-xs hover:underline">Find some vibes →</button>
             </div>
           )}
         </div>

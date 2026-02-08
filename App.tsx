@@ -26,6 +26,7 @@ const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [showAI, setShowAI] = useState(false);
   const [showPremium, setShowPremium] = useState(false);
+  const [showPinGate, setShowPinGate] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
@@ -37,12 +38,10 @@ const App: React.FC = () => {
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
   const [bookmarkedVerses, setBookmarkedVerses] = useState<any[]>([]);
 
-  // Effect to clear notifications automatically
+  // Improved notification clear effect
   useEffect(() => {
     if (notification) {
-      const timer = setTimeout(() => {
-        setNotification(null);
-      }, 3000);
+      const timer = setTimeout(() => setNotification(null), 3000);
       return () => clearTimeout(timer);
     }
   }, [notification]);
@@ -77,22 +76,25 @@ const App: React.FC = () => {
         setIconicQuotes(prev => prev.map(q => ({ ...q, isFavorite: bookmarkedIds.has(q.id) })));
         setBibleAffirmations(prev => prev.map(b => ({ ...b, isFavorite: bookmarkedIds.has(b.id) })));
 
-        // Filter and set KJV Bible bookmarks
+        // Critical fix: Ensure metadata is parsed if it's a string, or used directly if it's an object
         const kjvBookmarks = bookmarks
           .filter(b => b.item_type === 'kjv')
-          .map(b => ({
-            id: b.item_id,
-            text: b.metadata?.text || '',
-            reference: b.metadata?.reference || '',
-            timestamp: new Date(b.created_at).getTime()
-          }));
+          .map(b => {
+            const meta = typeof b.metadata === 'string' ? JSON.parse(b.metadata) : b.metadata;
+            return {
+              id: b.item_id,
+              text: meta?.text || '',
+              reference: meta?.reference || 'KJV Verse',
+              timestamp: b.created_at ? new Date(b.created_at).getTime() : Date.now()
+            };
+          });
         setBookmarkedVerses(kjvBookmarks);
       }
 
       const { data: entries } = await supabase.from('journal_entries').select('*').order('timestamp', { ascending: false });
       if (entries) setJournalEntries(entries);
     } catch (e) {
-      console.error("Sync error (potential network issue):", e);
+      console.error("Sync failed:", e);
     }
   }, []);
 
@@ -103,7 +105,6 @@ const App: React.FC = () => {
           if (prev >= 100) {
             clearInterval(interval);
             setTimeout(() => {
-              const hasOnboarded = localStorage.getItem('likkle_wisdom_onboarded');
               const sessionUser = localStorage.getItem('likkle_wisdom_user');
               if (sessionUser) {
                 try {
@@ -111,21 +112,14 @@ const App: React.FC = () => {
                   setUser(parsedUser);
                   if (!parsedUser.isGuest) syncUserContent(parsedUser.id);
                   setView('main');
-                } catch (e) {
-                  console.error("Auth session parse error:", e);
-                  setView('auth');
-                }
-              } else if (hasOnboarded) {
-                setView('auth');
-              } else {
-                setView('onboarding');
-              }
+                } catch { setView('auth'); }
+              } else { setView('onboarding'); }
             }, 600);
             return 100;
           }
-          return prev + Math.floor(Math.random() * 12) + 4;
+          return prev + Math.floor(Math.random() * 15) + 5;
         });
-      }, 120);
+      }, 100);
       return () => clearInterval(interval);
     }
   }, [view, syncUserContent]);
@@ -150,36 +144,23 @@ const App: React.FC = () => {
         }).eq('id', user.id);
         
         if (data.isPremium) {
-          await supabase.from('subscriptions').upsert({ 
-            user_id: user.id, 
-            status: 'active', 
-            amount: 5.00,
-            payment_method: 'Verified Card/PayPal'
-          });
+          await supabase.from('subscriptions').upsert({ user_id: user.id, status: 'active', amount: 5.00 });
         }
-      } catch (e) {
-        console.error("Profile update sync failed:", e);
-      }
+      } catch (e) { console.error("Update sync error:", e); }
     }
   };
 
   const handleToggleFavorite = async (id: string, type: 'quote' | 'iconic' | 'bible') => {
     let newState = false;
-    if (type === 'quote') {
-      setQuotes(prev => prev.map(q => q.id === id ? { ...q, isFavorite: newState = !q.isFavorite, updatedAt: Date.now() } : q));
-    } else if (type === 'iconic') {
-      setIconicQuotes(prev => prev.map(q => q.id === id ? { ...q, isFavorite: newState = !q.isFavorite } : q));
-    } else if (type === 'bible') {
-      setBibleAffirmations(prev => prev.map(q => q.id === id ? { ...q, isFavorite: newState = !q.isFavorite } : q));
-    }
+    if (type === 'quote') setQuotes(prev => prev.map(q => q.id === id ? { ...q, isFavorite: newState = !q.isFavorite, updatedAt: Date.now() } : q));
+    else if (type === 'iconic') setIconicQuotes(prev => prev.map(q => q.id === id ? { ...q, isFavorite: newState = !q.isFavorite } : q));
+    else if (type === 'bible') setBibleAffirmations(prev => prev.map(q => q.id === id ? { ...q, isFavorite: newState = !q.isFavorite } : q));
     
     if (user && !user.isGuest && supabase) {
       try {
         if (newState) await supabase.from('bookmarks').insert({ user_id: user.id, item_id: id, item_type: type });
         else await supabase.from('bookmarks').delete().eq('user_id', user.id).eq('item_id', id);
-      } catch (e) {
-        console.error("Bookmark sync failed:", e);
-      }
+      } catch (e) { console.error("Bookmark error:", e); }
     }
     setNotification(newState ? 'Saved to cabinet! ✨' : 'Removed from cabinet.');
   };
@@ -187,8 +168,8 @@ const App: React.FC = () => {
   const handleBookmarkBibleVerse = async (verse: any) => {
     const verseId = `kjv-${verse.book_id}-${verse.chapter}-${verse.verse}`;
     const reference = `${verse.book_name} ${verse.chapter}:${verse.verse}`;
-    
     let exists = false;
+
     setBookmarkedVerses(prev => {
       const alreadyIn = prev.find(v => v.id === verseId);
       if (alreadyIn) {
@@ -210,9 +191,7 @@ const App: React.FC = () => {
         } else {
           await supabase.from('bookmarks').delete().eq('user_id', user.id).eq('item_id', verseId);
         }
-      } catch (e) {
-        console.error("Bible bookmark sync failed:", e);
-      }
+      } catch (e) { console.error("Bible save error:", e); }
     }
     setNotification(!exists ? 'Verse saved to cabinet! 📖' : 'Verse removed.');
   };
@@ -221,11 +200,8 @@ const App: React.FC = () => {
     const newEntry: JournalEntry = { id: Date.now().toString(), title, text, mood, date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase(), timestamp: Date.now() };
     setJournalEntries(prev => [newEntry, ...prev]);
     if (user && !user.isGuest && supabase) {
-      try {
-        await supabase.from('journal_entries').insert({ user_id: user.id, title, text, mood, date: newEntry.date, timestamp: newEntry.timestamp });
-      } catch (e) {
-        console.error("Journal entry sync failed:", e);
-      }
+      try { await supabase.from('journal_entries').insert({ user_id: user.id, title, text, mood, date: newEntry.date, timestamp: newEntry.timestamp }); }
+      catch (e) { console.error("Journal error:", e); }
     }
     setNotification('Journal saved! ✍️');
   };
@@ -233,12 +209,8 @@ const App: React.FC = () => {
   const handleDeleteJournalEntry = async (id: string) => {
     setJournalEntries(prev => prev.filter(entry => entry.id !== id));
     if (user && !user.isGuest && supabase) {
-      try {
-        const { error } = await supabase.from('journal_entries').delete().eq('timestamp', parseInt(id));
-        if (error) await supabase.from('journal_entries').delete().eq('id', id);
-      } catch (e) {
-        console.error("Journal delete sync failed:", e);
-      }
+      try { await supabase.from('journal_entries').delete().eq('timestamp', parseInt(id)); }
+      catch (e) { console.error("Delete journal error:", e); }
     }
     setNotification('Entry removed! 🗑️');
   };
@@ -250,11 +222,8 @@ const App: React.FC = () => {
     else if (type === 'verse' || type === 'bible') setBibleAffirmations(prev => prev.map(q => q.id === id ? { ...q, isFavorite: false } : q));
     
     if (user && !user.isGuest && supabase) {
-      try {
-        await supabase.from('bookmarks').delete().eq('user_id', user.id).eq('item_id', id);
-      } catch (e) {
-        console.error("Remove bookmark sync failed:", e);
-      }
+      try { await supabase.from('bookmarks').delete().eq('user_id', user.id).eq('item_id', id); }
+      catch (e) { console.error("Remove bookmark error:", e); }
     }
     setNotification('Removed! 🗑️');
   };
@@ -263,17 +232,12 @@ const App: React.FC = () => {
     if (view === 'privacy') return <LegalView type="privacy" onClose={() => setView('main')} />;
     if (view === 'terms') return <LegalView type="terms" onClose={() => setView('main')} />;
     if (activeCategory) return <CategoryResultsView categoryId={activeCategory} onClose={() => setActiveCategory(null)} quotes={quotes} iconic={iconicQuotes} bible={bibleAffirmations} onFavorite={handleToggleFavorite} />;
-    
-    if (!user) return <Auth onAuthComplete={(u) => { 
-      setUser(u); setView('main'); 
-      localStorage.setItem('likkle_wisdom_user', JSON.stringify(u));
-      if (!u.isGuest) syncUserContent(u.id);
-    }} />;
+    if (!user) return <Auth onAuthComplete={(u) => { setUser(u); setView('main'); if (!u.isGuest) syncUserContent(u.id); }} />;
 
     switch (activeTab) {
       case 'home': return <Home user={user} dailyItems={dailyWisdom} onTabChange={setActiveTab} onFavorite={handleToggleFavorite} onOpenAI={() => setShowAI(true)} />;
       case 'discover': return <Discover searchQuery={searchQuery} onSearchChange={setSearchQuery} onCategoryClick={setActiveCategory} />;
-      case 'bible': return <BibleView user={user} onBookmark={handleBookmarkBibleVerse} onUpgrade={() => setShowPremium(true)} />;
+      case 'bible': return <BibleView user={user} onBookmark={handleBookmarkBibleVerse} onUpgrade={() => setShowPinGate(true)} />;
       case 'book': return <LikkleBook entries={journalEntries} onAdd={handleAddJournalEntry} onDelete={handleDeleteJournalEntry} searchQuery={searchQuery} onSearchChange={setSearchQuery} />;
       case 'me': return <Profile user={user} entries={journalEntries} quotes={quotes} iconic={iconicQuotes} bible={bibleAffirmations} bookmarkedVerses={bookmarkedVerses} onOpenSettings={() => setShowSettings(true)} onStatClick={setActiveTab} onUpdateUser={handleUpdateUser} onRemoveBookmark={handleRemoveBookmark} />;
       default: return <Home user={user} dailyItems={dailyWisdom} onTabChange={setActiveTab} onFavorite={handleToggleFavorite} onOpenAI={() => setShowAI(true)} />;
@@ -285,23 +249,29 @@ const App: React.FC = () => {
   return (
     <div className="relative flex flex-col h-screen max-w-[480px] mx-auto overflow-hidden bg-white dark:bg-background-dark shadow-2xl transition-colors duration-300">
       <div className="fixed inset-0 jamaica-gradient opacity-60 pointer-events-none z-0"></div>
+      
       {notification && (
         <div className="fixed top-8 left-1/2 -translate-x-1/2 z-[2000] animate-fade-in pointer-events-none w-fit px-8">
-          <div className="bg-[#f4d125] py-2.5 px-4 rounded-full flex items-center gap-2 shadow-lg border border-black/10">
-            <span className="material-symbols-outlined text-black font-black text-sm">check_circle</span>
+          <div className="bg-jamaican-gold py-2.5 px-4 rounded-full flex items-center gap-2 shadow-2xl border border-black/10">
+            <span className="material-symbols-outlined text-black font-black text-sm">notifications_active</span>
             <p className="text-black font-black text-[9px] uppercase tracking-wider whitespace-nowrap">{notification}</p>
           </div>
         </div>
       )}
+
       <main className="flex-1 relative z-10 overflow-y-auto no-scrollbar scroll-smooth">{renderContent()}</main>
       
+      {showPinGate && (
+        <PinEntryModal onClose={() => setShowPinGate(false)} onVerify={() => { setShowPinGate(false); setShowPremium(true); }} />
+      )}
+
       {showSettings && user && (
         <Settings 
           user={user} 
           isDarkMode={isDarkMode} 
           onToggleTheme={() => setIsDarkMode(!isDarkMode)} 
           onClose={() => setShowSettings(false)} 
-          onUpgrade={() => setShowPremium(true)} 
+          onUpgrade={() => setShowPinGate(true)} 
           onSignOut={() => { setUser(null); setShowSettings(false); setView('auth'); }} 
           onUpdateUser={handleUpdateUser} 
           onOpenPrivacy={() => { setShowSettings(false); setView('privacy'); }} 
@@ -312,7 +282,7 @@ const App: React.FC = () => {
         <AIWisdom 
           user={user} 
           onClose={() => setShowAI(false)} 
-          onUpgrade={() => { setShowAI(false); setShowPremium(true); }} 
+          onUpgrade={() => { setShowAI(false); setShowPinGate(true); }} 
         />
       )}
       {showPremium && (
@@ -322,6 +292,49 @@ const App: React.FC = () => {
         />
       )}
       {view === 'main' && <BottomNav activeTab={activeTab} onTabChange={setActiveTab} />}
+    </div>
+  );
+};
+
+const PinEntryModal: React.FC<{ onClose: () => void; onVerify: () => void }> = ({ onClose, onVerify }) => {
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState(false);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (pin === '1022') {
+      onVerify();
+    } else {
+      setError(true);
+      setPin('');
+      setTimeout(() => setError(false), 500);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[3000] bg-background-dark/95 flex flex-col items-center justify-center p-8 backdrop-blur-xl animate-fade-in">
+      <div className={`glass p-10 rounded-[3rem] w-full max-w-[320px] text-center border-white/5 shadow-2xl transition-all ${error ? 'border-red-500 bg-red-500/10 scale-95' : 'border-primary/20'}`}>
+        <span className="material-symbols-outlined text-primary text-5xl mb-6">lock_open</span>
+        <h2 className="text-xl font-black text-white mb-2 uppercase tracking-widest">Secret Gate</h2>
+        <p className="text-white/40 text-[10px] font-bold mb-8 uppercase tracking-widest leading-relaxed">Enter di secret pin fi access di donation feature.</p>
+        
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <input 
+            type="password" 
+            maxLength={4} 
+            placeholder="••••" 
+            autoFocus
+            className="w-full h-20 bg-white/5 border border-white/10 rounded-2xl text-center text-4xl font-black text-primary focus:ring-0 focus:border-primary transition-all tracking-[0.5em]"
+            value={pin}
+            onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+          />
+          <div className="grid grid-cols-2 gap-3">
+             <button type="button" onClick={onClose} className="glass py-4 rounded-xl font-black text-[10px] uppercase text-white/30">Cancel</button>
+             <button type="submit" className="bg-primary py-4 rounded-xl font-black text-[10px] uppercase text-background-dark shadow-xl">Confirm</button>
+          </div>
+        </form>
+        {error && <p className="text-red-500 text-[10px] font-black uppercase mt-4 animate-bounce">PIN incorrect!</p>}
+      </div>
     </div>
   );
 };
