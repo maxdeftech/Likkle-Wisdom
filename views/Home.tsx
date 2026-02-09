@@ -114,7 +114,7 @@ const Home: React.FC<HomeProps> = ({ user, dailyItems, onFavorite, onOpenAI, onT
                     onClick={() => onFavorite(currentItem.id, activeDaily === 'verse' ? 'bible' : 'quote')}
                     className={`flex-1 py-4 sm:py-6 rounded-2xl sm:rounded-3xl text-[10px] sm:text-[12px] font-black uppercase tracking-widest flex items-center justify-center gap-1 transition-all ${'isFavorite' in currentItem && currentItem.isFavorite ? 'bg-primary text-background-dark' : 'glass text-slate-900 dark:text-white'}`}
                    >
-                      <span className={`material-symbols-outlined text-lg sm:text-2xl ${'isFavorite' in currentItem && currentItem.isFavorite ? 'fill-1' : ''}`}>favorite</span> 
+                      <span className={`material-symbols-outlined text-lg sm:text-2xl ${'isFavorite' in currentItem && currentItem.isFavorite ? 'fill-1 animate-pop' : ''}`}>favorite</span> 
                       {'isFavorite' in currentItem && currentItem.isFavorite ? 'Saved' : 'Save'}
                    </button>
                 </div>

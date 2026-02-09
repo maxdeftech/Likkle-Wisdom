@@ -33,6 +33,7 @@
                         'float': 'float 3s ease-in-out infinite',
                         'slow-spin': 'slow-spin 12s linear infinite',
                         'pulse-glow': 'pulse-glow 2s ease-in-out infinite',
+                        'pop': 'pop 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',
                     },
                     keyframes: {
                         float: {
@@ -46,6 +47,11 @@
                         'pulse-glow': {
                             '0%, 100%': { opacity: '1', filter: 'drop-shadow(0 0 5px rgba(19, 236, 91, 0.4))' },
                             '50%': { opacity: '0.7', filter: 'drop-shadow(0 0 20px rgba(19, 236, 91, 0.8))' },
+                        },
+                        pop: {
+                            '0%': { transform: 'scale(1)' },
+                            '50%': { transform: 'scale(1.4)' },
+                            '100%': { transform: 'scale(1)' },
                         }
                     }
                 }
