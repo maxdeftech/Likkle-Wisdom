@@ -38,12 +38,9 @@ const App: React.FC = () => {
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
   const [bookmarkedVerses, setBookmarkedVerses] = useState<any[]>([]);
 
-  // Robust notification clear effect - ensures cleaning regardless of rapid triggers
   useEffect(() => {
     if (notification) {
-      const timer = setTimeout(() => {
-        setNotification(null);
-      }, 3000);
+      const timer = setTimeout(() => setNotification(null), 3000);
       return () => clearTimeout(timer);
     }
   }, [notification]);
@@ -63,14 +60,19 @@ const App: React.FC = () => {
   const syncUserContent = useCallback(async (userId: string) => {
     if (!supabase) return;
     try {
-      const { data: profile } = await supabase.from('profiles').select('is_premium').eq('id', userId).maybeSingle();
-      const { data: sub } = await supabase.from('subscriptions').select('*').eq('user_id', userId).maybeSingle();
-      
-      const isPremium = profile?.is_premium || !!sub;
-      if (isPremium) {
-        setUser(prev => prev ? { ...prev, isPremium: true } : null);
+      // 1. Sync Profile
+      const { data: profile } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
+      if (profile) {
+        setUser(prev => ({
+          id: userId,
+          username: profile.username || prev?.username || 'Seeker',
+          avatarUrl: profile.avatar_url || prev?.avatarUrl || undefined,
+          isPremium: !!profile.is_premium,
+          isGuest: false
+        }));
       }
 
+      // 2. Sync Bookmarks
       const { data: bookmarks } = await supabase.from('bookmarks').select('*').eq('user_id', userId);
       if (bookmarks) {
         const bookmarkedIds = new Set(bookmarks.map(b => b.item_id));
@@ -78,36 +80,59 @@ const App: React.FC = () => {
         setIconicQuotes(prev => prev.map(q => ({ ...q, isFavorite: bookmarkedIds.has(q.id) })));
         setBibleAffirmations(prev => prev.map(b => ({ ...b, isFavorite: bookmarkedIds.has(b.id) })));
 
-        // Critical fix: Extremely robust metadata parsing for different DB storage formats
         const kjvBookmarks = bookmarks
           .filter(b => b.item_type === 'kjv')
           .map(b => {
             let meta = b.metadata;
             if (typeof meta === 'string') {
-              try {
-                meta = JSON.parse(meta);
-              } catch (e) {
-                console.error("Metadata parse error:", e);
-                meta = {};
-              }
+              try { meta = JSON.parse(meta); } catch { meta = {}; }
             }
             return {
               id: b.item_id,
-              text: meta?.text || '',
-              reference: meta?.reference || 'KJV Verse',
+              text: meta?.text || 'Verse saved',
+              reference: meta?.reference || 'KJV Bible',
               timestamp: b.created_at ? new Date(b.created_at).getTime() : Date.now()
             };
           });
         setBookmarkedVerses(kjvBookmarks);
       }
 
-      const { data: entries } = await supabase.from('journal_entries').select('*').order('timestamp', { ascending: false });
+      // 3. Sync Journal
+      const { data: entries } = await supabase.from('journal_entries').select('*').eq('user_id', userId).order('timestamp', { ascending: false });
       if (entries) setJournalEntries(entries);
     } catch (e) {
       console.error("Sync failed:", e);
     }
   }, []);
 
+  // Auth Persistence & Real-time Sync
+  useEffect(() => {
+    if (!supabase) return;
+
+    // Check existing session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        syncUserContent(session.user.id);
+        if (view === 'splash') setView('main');
+      }
+    });
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session) {
+        setUser({ id: session.user.id, username: session.user.user_metadata?.username || 'Seeker', isGuest: false, isPremium: false });
+        syncUserContent(session.user.id);
+        if (view === 'auth' || view === 'splash') setView('main');
+      } else {
+        setUser(null);
+        if (view === 'main') setView('auth');
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [syncUserContent]);
+
+  // Splash logic
   useEffect(() => {
     if (view === 'splash') {
       const interval = setInterval(() => {
@@ -115,36 +140,22 @@ const App: React.FC = () => {
           if (prev >= 100) {
             clearInterval(interval);
             setTimeout(() => {
-              const sessionUser = localStorage.getItem('likkle_wisdom_user');
-              if (sessionUser) {
-                try {
-                  const parsedUser = JSON.parse(sessionUser);
-                  setUser(parsedUser);
-                  if (!parsedUser.isGuest) syncUserContent(parsedUser.id);
-                  setView('main');
-                } catch { setView('auth'); }
-              } else { setView('onboarding'); }
-            }, 600);
+              if (!user) setView('onboarding');
+              else setView('main');
+            }, 500);
             return 100;
           }
-          return prev + Math.floor(Math.random() * 15) + 5;
+          return prev + 10;
         });
-      }, 100);
+      }, 150);
       return () => clearInterval(interval);
     }
-  }, [view, syncUserContent]);
-
-  useEffect(() => {
-    if (isDarkMode) document.documentElement.classList.add('dark');
-    else document.documentElement.classList.remove('dark');
-  }, [isDarkMode]);
+  }, [view, user]);
 
   const handleUpdateUser = async (data: Partial<User>) => {
     if (!user) return;
     const updatedUser = { ...user, ...data };
     setUser(updatedUser);
-    localStorage.setItem('likkle_wisdom_user', JSON.stringify(updatedUser));
-
     if (!user.isGuest && supabase) {
       try {
         await supabase.from('profiles').update({
@@ -152,10 +163,6 @@ const App: React.FC = () => {
           avatar_url: data.avatarUrl || user.avatarUrl,
           is_premium: data.isPremium !== undefined ? data.isPremium : user.isPremium
         }).eq('id', user.id);
-        
-        if (data.isPremium) {
-          await supabase.from('subscriptions').upsert({ user_id: user.id, status: 'active', amount: 5.00 });
-        }
       } catch (e) { console.error("Update sync error:", e); }
     }
   };
@@ -196,7 +203,7 @@ const App: React.FC = () => {
             user_id: user.id, 
             item_id: verseId, 
             item_type: 'kjv',
-            metadata: { text: verse.text, reference }
+            metadata: { text: verse.text, reference } 
           });
         } else {
           await supabase.from('bookmarks').delete().eq('user_id', user.id).eq('item_id', verseId);
@@ -238,11 +245,21 @@ const App: React.FC = () => {
     setNotification('Removed! 🗑️');
   };
 
+  const handleSignOut = async () => {
+    if (supabase) await supabase.auth.signOut();
+    setUser(null);
+    setShowSettings(false);
+    setView('auth');
+  };
+
   const renderContent = () => {
     if (view === 'privacy') return <LegalView type="privacy" onClose={() => setView('main')} />;
     if (view === 'terms') return <LegalView type="terms" onClose={() => setView('main')} />;
     if (activeCategory) return <CategoryResultsView categoryId={activeCategory} onClose={() => setActiveCategory(null)} quotes={quotes} iconic={iconicQuotes} bible={bibleAffirmations} onFavorite={handleToggleFavorite} />;
-    if (!user) return <Auth onAuthComplete={(u) => { setUser(u); setView('main'); if (!u.isGuest) syncUserContent(u.id); }} />;
+    if (!user) {
+        if (view === 'onboarding') return <Onboarding onFinish={() => setView('auth')} />;
+        return <Auth onAuthComplete={(u) => { setUser(u); setView('main'); syncUserContent(u.id); }} />;
+    }
 
     switch (activeTab) {
       case 'home': return <Home user={user} dailyItems={dailyWisdom} onTabChange={setActiveTab} onFavorite={handleToggleFavorite} onOpenAI={() => setShowAI(true)} />;
@@ -282,7 +299,7 @@ const App: React.FC = () => {
           onToggleTheme={() => setIsDarkMode(!isDarkMode)} 
           onClose={() => setShowSettings(false)} 
           onUpgrade={() => setShowPinGate(true)} 
-          onSignOut={() => { setUser(null); setShowSettings(false); setView('auth'); }} 
+          onSignOut={handleSignOut} 
           onUpdateUser={handleUpdateUser} 
           onOpenPrivacy={() => { setShowSettings(false); setView('privacy'); }} 
           onOpenTerms={() => { setShowSettings(false); setView('terms'); }} 
